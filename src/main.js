@@ -1,32 +1,41 @@
 import Phaser from 'phaser';
 
 /* ==========================================================================
- * 1D 근접 격투 — Phaser 3 (단일 파일)
+ * 1D 근접 격투 — Phaser 3
  *
  *  조작
  *    Q / R          좌 / 우 이동
  *    SPACE          점프
- *    W              칼 휘두르기 — 누르는 즉시 발동 (근접, 밀쳐냄)
- *    E              단검 장전 → 마우스로 조준 → 좌클릭으로 투척
+ *    W              참격 — 즉시 발동 · 날아오는 단검을 쳐낼 수 있다
+ *    E              단검 장전 → 마우스 조준 → 좌클릭 투척 (소지 3개)
  *    ESC            장전 취소
  *    1 2 3          AI 난이도
  *    ENTER          재시작
  *
- *  캐릭터는 항상 상대를 바라보므로 칼은 조준이 필요 없습니다.
- *  단검만 마우스 각도를 씁니다. AI도 같은 규칙과 예고 동작을 따릅니다.
+ *  단검은 유한 자원이다. 빗나가거나 명중한 단검은 땅에 떨어지고,
+ *  그 위를 지나가면 주울 수 있다. 화면 밖으로 나간 단검은 사라진다.
  * ========================================================================== */
 
 const VIEW = { W: 960, H: 540 };
-const GROUND_Y = 452;          // 발이 닿는 높이 (물리 월드의 아래쪽 경계)
+const GROUND_Y = 452;
 
 const PHYS = {
   gravity: 1500,
   moveSpeed: 235,
-  airControl: 0.72,            // 공중에서의 이동 제어력
+  airControl: 0.72,
   jumpV: -600,
 };
 
-/* ── 팔레트 ─────────────────────────────────────────────────────────── */
+const MAX_AMMO = 3;
+
+/* 히트스톱 — 타격 순간 물리를 멈추는 시간(ms) */
+const FREEZE = {
+  knife: 45,
+  slash: 90,
+  deflect: 70,
+  clash: 170,
+};
+
 const C = {
   sky:    0x141824,
   far:    0x1b2130,
@@ -41,30 +50,26 @@ const C = {
   gold:   0xd9a441,
 };
 
-/* ── 스킬 ────────────────────────────────────────────────────────────
- *  W 참격 : 즉시 발동. 시전 후 startup 만큼 뒤에 판정이 생긴다.
- *  E 단검 : 장전 → 조준 → 클릭. 직선으로 날아간다.
- * ------------------------------------------------------------------ */
 const SKILLS = {
   W: {
     name: '참격', kind: 'slash', aimed: false,
-    cd: 750, dmg: 18, startup: 110, active: 90,
-    reach: 82, arc: 105, knock: 340, hue: 0xc9d4e6,
-    hint: '근접 · 밀쳐냄',
+    cd: 750, dmg: 18, startup: 110, active: 100,
+    reach: 84, arc: 105, knock: 340, hue: 0xc9d4e6,
+    hint: '근접 · 단검 쳐냄',
   },
   E: {
     name: '단검', kind: 'knife', aimed: true,
-    cd: 900, dmg: 11, startup: 90,
-    speed: 720, range: 900, len: 16, hue: 0xffd280,
-    hint: '조준 투척',
+    cd: 620, dmg: 11, startup: 90,
+    speed: 720, range: 780, len: 16, hue: 0xffd280,
+    hint: '조준 투척 · 회수 가능',
   },
 };
 const SKILL_KEYS = ['W', 'E'];
 
 const DIFFICULTY = {
-  1: { label: '연습', react: 540, jitter: 0.20, dodge: 0.30, aggro: 0.55, lead: 0.5,  windup: 1.25 },
-  2: { label: '호각', react: 340, jitter: 0.10, dodge: 0.65, aggro: 0.80, lead: 0.85, windup: 1.0 },
-  3: { label: '사투', react: 215, jitter: 0.04, dodge: 0.90, aggro: 1.00, lead: 1.0,  windup: 0.75 },
+  1: { label: '연습', react: 540, jitter: 0.20, dodge: 0.30, aggro: 0.55, lead: 0.5,  windup: 1.25, parry: 0.10 },
+  2: { label: '호각', react: 340, jitter: 0.10, dodge: 0.65, aggro: 0.80, lead: 0.85, windup: 1.0,  parry: 0.35 },
+  3: { label: '사투', react: 215, jitter: 0.04, dodge: 0.90, aggro: 1.00, lead: 1.0,  windup: 0.75, parry: 0.65 },
 };
 
 const FONT = '"Pretendard", "Noto Sans KR", system-ui, sans-serif';
@@ -81,41 +86,59 @@ class Fighter {
     this.maxHp = 100;
     this.hp = 100;
     this.alive = true;
+    this.ammo = MAX_AMMO;
 
     this.w = 26;
     this.h = 52;
-    this.facing = 1;              // 1 = 오른쪽, -1 = 왼쪽
+    this.facing = 1;
 
-    // 몸통이 물리 본체, 머리는 매 프레임 따라다니는 장식
+    // 물리 본체는 보이지 않는다. 눈에 보이는 몸은 따로 그려서 자유롭게 변형한다.
     this.go = scene.add.rectangle(x, GROUND_Y - this.h / 2, this.w, this.h, color);
-    this.go.setDepth(10);
+    this.go.setVisible(false);
     scene.physics.add.existing(this.go);
     this.body = this.go.body;
     this.body.setCollideWorldBounds(true);
     this.body.setDragX(1800);
 
+    // 발밑을 기준점으로 삼아야 눌리고 늘어나는 변형이 자연스럽다
+    this.torso = scene.add.rectangle(x, GROUND_Y, this.w, this.h, color).setDepth(10);
+    this.torso.setOrigin(0.5, 1);
     this.head = scene.add.circle(x, 0, 11, color).setDepth(10);
     this.head.setStrokeStyle(2, C.sky, 0.8);
 
+    // 스쿼시 상태 — 1이 기본, 트윈으로 되돌아온다
+    this.sq = { x: 1, y: 1, lean: 0 };
+    this.sqTween = null;
+
     this.cd = { W: 0, E: 0 };
-    this.action = null;           // { key, hitAt, endAt, facing, aim }
+    this.action = null;
     this.invulnUntil = 0;
-    this.lockUntil = 0;           // 경직 — 이동 입력 무시
+    this.lockUntil = 0;
+    this.wasAir = false;
   }
 
   get x() { return this.go.x; }
   get y() { return this.go.y; }
+  get footY() { return this.go.y + this.h / 2; }
   get onGround() { return this.body.blocked.down || this.body.touching.down; }
 
-  ready(key, t) { return this.alive && !this.action && t >= this.cd[key]; }
+  ready(key, t) {
+    if (!this.alive || this.action || t < this.cd[key]) return false;
+    if (key === 'E' && this.ammo <= 0) return false;
+    return true;
+  }
   cdLeft(key, t) { return Math.max(0, this.cd[key] - t); }
 
-  /** dir: -1, 0, 1 */
+  /** 참격 판정이 살아있는 구간인가 */
+  slashActive(t) {
+    const a = this.action;
+    return !!(a && a.key === 'W' && a.done && t < a.endAt);
+  }
+
   walk(dir, t) {
     if (!this.alive) { this.body.setVelocityX(0); return; }
     if (t < this.lockUntil) return;
 
-    // 시전 중에는 발이 묶인다 (지상에서만)
     const cast = this.action ? (this.onGround ? 0 : 0.5) : 1;
     const ctrl = (this.onGround ? 1 : PHYS.airControl) * cast;
 
@@ -127,15 +150,24 @@ class Fighter {
   }
 
   jump(t) {
-    if (!this.alive || !this.onGround) return false;
-    if (t < this.lockUntil) return false;
+    if (!this.alive || !this.onGround || t < this.lockUntil) return false;
     this.body.setVelocityY(PHYS.jumpV);
+    this.squash(0.82, 1.24, 0, 240);      // 도약 — 위로 늘어남
     return true;
   }
 
   faceToward(other) {
-    if (this.action) return;                    // 시전 중에는 방향 고정
+    if (this.action) return;
     this.facing = other.x >= this.x ? 1 : -1;
+  }
+
+  /** 스쿼시/스트레치 + 기울임. 목표값을 찍고 기본 자세로 되돌린다. */
+  squash(sx, sy, lean = 0, dur = 260, ease = 'Back.easeOut') {
+    if (this.sqTween) this.sqTween.stop();
+    this.sq.x = sx; this.sq.y = sy; this.sq.lean = lean;
+    this.sqTween = this.scene.tweens.add({
+      targets: this.sq, x: 1, y: 1, lean: 0, duration: dur, ease,
+    });
   }
 
   takeHit(dmg, t, srcX, knock) {
@@ -144,18 +176,20 @@ class Fighter {
     this.hp = Math.max(0, this.hp - dmg);
     this.scene.popText(this.x, this.y - 46, `-${dmg}`, this.color);
 
-    this.go.setFillStyle(C.bone);
+    const dir = this.x >= srcX ? 1 : -1;
+    this.squash(1.28, 0.76, dir * 0.22, 320);
+
+    this.torso.setFillStyle(C.bone);
     this.head.setFillStyle(C.bone);
-    this.scene.time.delayedCall(70, () => {
-      if (this.go.active) { this.go.setFillStyle(this.color); this.head.setFillStyle(this.color); }
+    this.scene.time.delayedCall(80, () => {
+      if (this.torso.active) { this.torso.setFillStyle(this.color); this.head.setFillStyle(this.color); }
     });
 
     if (knock > 0) {
-      const dir = this.x >= srcX ? 1 : -1;
       this.body.setVelocityX(dir * knock);
       this.body.setVelocityY(-190);
       this.lockUntil = t + 220;
-      this.action = null;                        // 시전 중이었다면 취소
+      this.action = null;
     }
 
     if (this.hp <= 0) this.die();
@@ -166,19 +200,36 @@ class Fighter {
     this.alive = false;
     this.action = null;
     this.body.setVelocityX(0);
-    this.go.setFillStyle(C.dim);
+    this.torso.setFillStyle(C.dim);
     this.head.setFillStyle(C.dim);
-    this.scene.burst(this.x, this.y, this.color, 24);
+    this.squash(1.5, 0.5, 0, 500);
+    this.scene.burst(this.x, this.y, this.color, 26);
   }
 
-  syncVisual() {
-    this.head.setPosition(this.x + this.facing * 3, this.y - this.h / 2 - 9);
+  /** 착지 감지 + 시각 동기화 */
+  syncVisual(t) {
+    const air = !this.onGround;
+    if (this.wasAir && !air && this.alive) {
+      const impact = Phaser.Math.Clamp(Math.abs(this.body.prevVelocity.y) / 700, 0.25, 1);
+      this.squash(1 + 0.34 * impact, 1 - 0.3 * impact, 0, 300);   // 착지 — 눌림
+    }
+    this.wasAir = air;
+
+    const fy = this.footY;
+    this.torso.setPosition(this.x, fy);
+    this.torso.setScale(this.sq.x, this.sq.y);
+    this.torso.setRotation(this.sq.lean);
+
+    // 머리는 변형된 몸 높이를 따라간다
+    const hx = this.x + Math.sin(this.sq.lean) * this.h * this.sq.y;
+    const hy = fy - this.h * this.sq.y * Math.cos(this.sq.lean) - 9;
+    this.head.setPosition(hx + this.facing * 3, hy);
+    this.head.setScale(this.sq.x * 0.5 + 0.5, this.sq.y * 0.5 + 0.5);
   }
 }
 
 /* ========================================================================== */
-/*  AI — 1차원이라 판단 변수가 거리 하나로 줄어든다.                            */
-/*  그래서 난이도 조절은 조준 정확도가 아니라 '판단 실수'로 만든다.               */
+/*  AI                                                                         */
 /* ========================================================================== */
 class AI {
   constructor(scene, self, foe, level = 2) {
@@ -188,10 +239,11 @@ class AI {
     this.setLevel(level);
 
     this.nextDecision = 0;
-    this.plan = null;             // { key, fireAt, aim }
+    this.plan = null;
     this.desiredGap = 300;
     this.evadeUntil = 0;
     this.evadeDir = 1;
+    this.recovering = null;     // 주우러 가는 단검
   }
 
   setLevel(level) { this.level = level; this.p = DIFFICULTY[level]; }
@@ -203,9 +255,8 @@ class AI {
     const gap = Math.abs(foe.x - me.x);
     const toFoe = foe.x > me.x ? 1 : -1;
 
-    this.dodgeIncoming(t);
+    this.dodgeIncoming(t, gap);
 
-    // 예고가 끝나면 실행
     if (this.plan && t >= this.plan.fireAt) {
       this.scene.cast(me, this.plan.key, this.plan.aim);
       this.plan = null;
@@ -220,64 +271,81 @@ class AI {
     this.step(t, gap, toFoe);
   }
 
-  /** 날아오는 단검을 점프로 넘거나 뒤로 뺀다 */
-  dodgeIncoming(t) {
-    if (t < this.evadeUntil) return;
+  /** 날아오는 단검 — 참격으로 쳐내거나, 점프로 넘거나, 물러난다 */
+  dodgeIncoming(t, gap) {
+    if (t < this.evadeUntil || this.plan) return;
     const me = this.self;
 
     for (const k of this.scene.knives) {
-      if (k.owner === me) continue;
+      if (k.owner === me || k.grounded) continue;
 
       const dx = k.go.x - me.x;
       const vx = k.go.body.velocity.x;
       if (Math.abs(vx) < 1) continue;
-      if (Math.sign(dx) === Math.sign(vx)) continue;      // 멀어지는 중
+      if (Math.sign(dx) === Math.sign(vx)) continue;
 
-      const tc = -dx / vx;                                 // 도달까지 (초)
+      const tc = -dx / vx;
       if (tc < 0 || tc > 0.45) continue;
 
       const yAt = k.go.y + k.go.body.velocity.y * tc;
-      const hitsTorso = Math.abs(yAt - me.y) < me.h / 2 + 10;
-      if (!hitsTorso) continue;
+      if (Math.abs(yAt - me.y) > me.h / 2 + 12) continue;
+
+      // 쳐내기 — 타이밍이 맞아야 하므로 참격 발동 시간을 역산한다
+      const canParry = me.ready('W', t) && tc * 1000 > SKILLS.W.startup - 40;
+      if (canParry && Math.random() < this.p.parry) {
+        this.plan = { key: 'W', fireAt: t + 40, aim: null };
+        return;
+      }
+
       if (Math.random() > this.p.dodge) continue;
 
-      // 몸통 높이로 오면 점프가 가장 확실하다
-      if (me.onGround && me.jump(t)) {
-        this.evadeUntil = t + 260;
-      } else {
-        this.evadeDir = dx > 0 ? -1 : 1;
-        this.evadeUntil = t + 260;
-      }
+      if (me.onGround && me.jump(t)) this.evadeUntil = t + 260;
+      else { this.evadeDir = dx > 0 ? -1 : 1; this.evadeUntil = t + 260; }
       return;
     }
   }
 
   decide(t, gap, toFoe) {
     const me = this.self, foe = this.foe;
+
+    // 탄약이 없으면 회수를 우선한다
+    if (me.ammo <= 0) {
+      const pick = this.nearestPickup();
+      if (pick && gap > 110) { this.recovering = pick; return; }
+    } else {
+      this.recovering = null;
+    }
+
     if (Math.random() > this.p.aggro) return;
 
-    const sameHeight = Math.abs(foe.y - me.y) < 40;
-    const options = [];
+    const level = Math.abs(foe.y - me.y) < 40;
+    const opts = [];
+    if (gap < SKILLS.W.reach * 0.9 && level && me.ready('W', t)) opts.push('W');
+    if (gap > 130 && me.ready('E', t)) opts.push('E');
 
-    if (gap < SKILLS.W.reach * 0.9 && sameHeight && me.ready('W', t)) options.push('W');
-    if (gap > 120 && me.ready('E', t)) options.push('E');
-
-    if (options.length === 0) {
+    if (opts.length === 0) {
       this.desiredGap = gap < 90 ? 260 : Phaser.Math.Between(150, 330);
-      // 상대가 공중에 있으면 따라 뛴다
-      if (!sameHeight && foe.y < me.y - 50 && me.onGround && Math.random() < 0.4) me.jump(t);
+      if (!level && foe.y < me.y - 50 && me.onGround && Math.random() < 0.4) me.jump(t);
       return;
     }
 
-    const key = Phaser.Utils.Array.GetRandom(options);
+    const key = Phaser.Utils.Array.GetRandom(opts);
     const sk = SKILLS[key];
-    const aim = sk.aimed ? this.aimKnife(sk) : null;
-
-    this.plan = { key, fireAt: t + 260 * this.p.windup, aim };
+    this.plan = { key, fireAt: t + 260 * this.p.windup, aim: sk.aimed ? this.aimKnife(sk) : null };
     this.desiredGap = key === 'W' ? 55 : 300;
   }
 
-  /** 단검 예측 조준 */
+  nearestPickup() {
+    const me = this.self;
+    let best = null, bd = Infinity;
+    for (const k of this.scene.knives) {
+      if (!k.grounded) continue;
+      const d = Math.abs(k.go.x - me.x);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  }
+
   aimKnife(sk) {
     const me = this.self, foe = this.foe;
     const flight = Math.abs(foe.x - me.x) / sk.speed;
@@ -294,6 +362,16 @@ class AI {
     const me = this.self;
 
     if (t < this.evadeUntil) { me.walk(this.evadeDir, t); return; }
+
+    // 단검 회수 중
+    if (this.recovering) {
+      if (!this.recovering.grounded || me.ammo >= MAX_AMMO) { this.recovering = null; }
+      else {
+        const dx = this.recovering.go.x - me.x;
+        me.walk(Math.abs(dx) < 12 ? 0 : Math.sign(dx), t);
+        return;
+      }
+    }
 
     const err = gap - this.desiredGap;
     if (Math.abs(err) < 26) { me.walk(0, t); return; }
@@ -312,12 +390,12 @@ class Duel extends Phaser.Scene {
     this.over = false;
     this.armed = null;
     this.knives = [];
+    this.frozenUntil = 0;
 
     this.physics.world.setBounds(0, 0, VIEW.W, GROUND_Y);
     this.drawStage();
 
     this.gAim = this.add.graphics().setDepth(6);
-    this.gFx = this.add.graphics().setDepth(18);
     this.gHud = this.add.graphics().setDepth(30);
 
     this.player = new Fighter(this, 250, C.player, '나');
@@ -328,31 +406,34 @@ class Duel extends Phaser.Scene {
     this.buildHud();
   }
 
-  /* ── 배경 ─────────────────────────────────────────────────────────── */
   drawStage() {
     const { W, H } = VIEW;
     const g = this.add.graphics().setDepth(0);
 
     g.fillStyle(C.sky, 1).fillRect(0, 0, W, H);
-
-    // 원경 — 시차 없이도 깊이감을 주는 실루엣
     g.fillStyle(C.far, 1);
     for (let i = 0; i < 7; i++) {
-      const bx = i * 150 - 40, bw = 90 + (i % 3) * 40, bh = 120 + (i % 4) * 60;
-      g.fillRect(bx, GROUND_Y - bh, bw, bh);
+      g.fillRect(i * 150 - 40, GROUND_Y - (120 + (i % 4) * 60), 90 + (i % 3) * 40, 120 + (i % 4) * 60);
     }
     g.fillStyle(C.near, 1);
     for (let i = 0; i < 5; i++) {
-      const bx = i * 210 + 60, bw = 130, bh = 70 + (i % 3) * 40;
-      g.fillRect(bx, GROUND_Y - bh, bw, bh);
+      g.fillRect(i * 210 + 60, GROUND_Y - (70 + (i % 3) * 40), 130, 70 + (i % 3) * 40);
     }
-
-    // 지면
     g.fillStyle(C.ground, 1).fillRect(0, GROUND_Y, W, H - GROUND_Y);
     g.lineStyle(2, C.line, 1).lineBetween(0, GROUND_Y, W, GROUND_Y);
     g.lineStyle(1, C.line, 0.4);
     for (let x = 0; x < W; x += 48) g.lineBetween(x, GROUND_Y, x - 20, H);
   }
+
+  /* ── 히트스톱 ─────────────────────────────────────────────────────── */
+  freeze(ms) {
+    this.frozenUntil = Math.max(this.frozenUntil, this.time.now + ms);
+    this.physics.world.pause();
+    this.time.delayedCall(ms, () => {
+      if (this.time.now >= this.frozenUntil - 8) this.physics.world.resume();
+    });
+  }
+  get frozen() { return this.time.now < this.frozenUntil; }
 
   /* ── 입력 ─────────────────────────────────────────────────────────── */
   bindInput() {
@@ -362,17 +443,20 @@ class Duel extends Phaser.Scene {
       jump: Phaser.Input.Keyboard.KeyCodes.SPACE,
     });
 
-    // 참격 — 즉시 발동
     this.input.keyboard.on('keydown-W', () => {
       if (this.over || !this.player.ready('W', this.time.now)) return;
       this.armed = null;
       this.cast(this.player, 'W', null);
     });
 
-    // 단검 — 장전 후 클릭
     this.input.keyboard.on('keydown-E', () => {
       if (this.over || !this.player.alive) return;
-      if (!this.player.ready('E', this.time.now)) {
+      const t = this.time.now;
+      if (this.player.ammo <= 0) {
+        this.popText(this.player.x, this.player.y - 56, '단검 없음', C.dim);
+        return;
+      }
+      if (!this.player.ready('E', t)) {
         this.popText(this.player.x, this.player.y - 56, '쿨다운', C.dim);
         return;
       }
@@ -407,67 +491,134 @@ class Duel extends Phaser.Scene {
     const sk = SKILLS[key];
     who.cd[key] = t + sk.cd;
     who.action = {
-      key,
+      key, aim, done: false,
       hitAt: t + sk.startup,
       endAt: t + sk.startup + (sk.active || 60),
       facing: who.facing,
-      aim,
-      done: false,
     };
+    // 예비 동작 — 뒤로 젖힘
+    if (key === 'W') who.squash(0.92, 1.06, -who.facing * 0.16, sk.startup, 'Sine.easeOut');
   }
 
-  /** startup 이 지난 시점에 실제 판정/발사가 일어난다 */
   resolveAction(who, t) {
     const a = who.action;
     if (!a) return;
 
     if (!a.done && t >= a.hitAt) {
       a.done = true;
-      if (a.key === 'W') this.doSlash(who, a);
-      else if (a.key === 'E') this.doKnife(who, a);
+      if (a.key === 'W') this.doSlash(who, a, t);
+      else this.doKnife(who, a);
     }
-    if (t >= a.endAt) who.action = null;
+    if (a && t >= a.endAt) who.action = null;
   }
 
-  doSlash(who, a) {
+  /* ── 참격 ─────────────────────────────────────────────────────────── */
+  doSlash(who, a, t) {
     const sk = SKILLS.W;
-    const t = this.time.now;
     const foe = who === this.player ? this.enemy : this.player;
-    const cx = who.x, cy = who.y;
     const base = a.facing > 0 ? 0 : Math.PI;
     const half = Phaser.Math.DegToRad(sk.arc) / 2;
 
-    // 궤적
-    const g = this.add.graphics().setDepth(19);
-    g.fillStyle(sk.hue, 0.35);
-    g.beginPath();
-    g.slice(cx, cy, sk.reach, base - half, base + half, false);
-    g.fillPath();
-    g.lineStyle(2, C.bone, 0.8);
-    g.beginPath();
-    g.slice(cx, cy, sk.reach, base - half, base + half, false);
-    g.strokePath();
-    this.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+    who.squash(1.14, 0.9, a.facing * 0.24, 240);     // 휘두름 — 앞으로 기울임
+    this.slashTrail(who.x, who.y, base, half, sk.reach, sk.hue);
     this.cameras.main.shake(70, 0.003);
 
-    // 판정 — 부채꼴 안에 상대 몸통이 걸치는지
-    if (!foe.alive) return;
-    const d = Phaser.Math.Distance.Between(cx, cy, foe.x, foe.y);
-    if (d > sk.reach + foe.w / 2) return;
-    const ang = Phaser.Math.Angle.Between(cx, cy, foe.x, foe.y);
-    if (Math.abs(Phaser.Math.Angle.Wrap(ang - base)) > half) return;
+    // ① 참격 대 참격 — 서로의 칼이 같은 순간 부딪히면 격돌
+    const fa = foe.action;
+    const facingEach = a.facing !== foe.facing;
+    const gap = Math.abs(foe.x - who.x);
+    if (fa && fa.key === 'W' && Math.abs(fa.hitAt - t) < 120 &&
+        gap < sk.reach * 1.5 && facingEach) {
+      this.clash(who, foe, t);
+      return;
+    }
 
-    foe.takeHit(sk.dmg, t, cx, sk.knock);
-    this.burst((cx + foe.x) / 2, (cy + foe.y) / 2, sk.hue, 12);
+    // ② 몸통 판정
+    if (foe.alive) {
+      const d = Phaser.Math.Distance.Between(who.x, who.y, foe.x, foe.y);
+      const ang = Phaser.Math.Angle.Between(who.x, who.y, foe.x, foe.y);
+      if (d <= sk.reach + foe.w / 2 && Math.abs(Phaser.Math.Angle.Wrap(ang - base)) <= half) {
+        if (foe.takeHit(sk.dmg, t, who.x, sk.knock)) {
+          this.burst((who.x + foe.x) / 2, (who.y + foe.y) / 2, sk.hue, 14);
+          this.freeze(FREEZE.slash);
+        }
+      }
+    }
   }
 
+  /** 참격 판정이 살아있는 동안 매 프레임 호출 — 단검 쳐내기 */
+  deflectCheck(who, t) {
+    const sk = SKILLS.W;
+    const base = who.action.facing > 0 ? 0 : Math.PI;
+    const half = Phaser.Math.DegToRad(sk.arc) / 2;
+
+    for (const k of this.knives) {
+      if (k.owner === who || k.grounded || k.deflectedAt > t - 200) continue;
+
+      const d = Phaser.Math.Distance.Between(who.x, who.y, k.go.x, k.go.y);
+      if (d > sk.reach + 10) continue;
+      const ang = Phaser.Math.Angle.Between(who.x, who.y, k.go.x, k.go.y);
+      if (Math.abs(Phaser.Math.Angle.Wrap(ang - base)) > half) continue;
+
+      // 되받아친다 — 소유권이 넘어가므로 던진 쪽이 맞을 수 있다
+      const v = k.go.body.velocity;
+      k.go.body.setVelocity(-v.x * 0.92, -v.y * 0.92 - 40);
+      k.go.setRotation(Math.atan2(-v.y, -v.x));
+      k.go.setFillStyle(C.steel);
+      k.owner = who;
+      k.deflectedAt = t;
+      k.dieAt = t + 1400;
+
+      this.burst(k.go.x, k.go.y, C.steel, 10);
+      this.popText(k.go.x, k.go.y - 24, '쳐냄', C.steel);
+      this.freeze(FREEZE.deflect);
+      this.cameras.main.shake(90, 0.005);
+    }
+  }
+
+  clash(a, b, t) {
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+
+    a.action = null; b.action = null;
+    for (const f of [a, b]) {
+      const dir = f.x >= mx ? 1 : -1;
+      f.body.setVelocity(dir * 300, -230);
+      f.lockUntil = t + 240;
+      f.cd.W = t + 420;                       // 곧바로 다시 붙을 수 있게
+      f.squash(0.82, 1.2, -dir * 0.3, 380);
+    }
+
+    this.burst(mx, my, C.bone, 30);
+    this.popText(mx, my - 40, '격돌', C.gold);
+    this.cameras.main.shake(220, 0.014);
+    this.freeze(FREEZE.clash);
+
+    const ring = this.add.circle(mx, my, 12).setDepth(25);
+    ring.setStrokeStyle(3, C.bone, 1);
+    ring.setFillStyle();
+    this.tweens.add({ targets: ring, scale: 5, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+  }
+
+  slashTrail(x, y, base, half, reach, hue) {
+    const g = this.add.graphics().setDepth(19);
+    g.fillStyle(hue, 0.35);
+    g.beginPath(); g.slice(x, y, reach, base - half, base + half, false); g.fillPath();
+    g.lineStyle(2, C.bone, 0.85);
+    g.beginPath(); g.slice(x, y, reach, base - half, base + half, false); g.strokePath();
+    this.tweens.add({ targets: g, alpha: 0, duration: 220, onComplete: () => g.destroy() });
+  }
+
+  /* ── 단검 ─────────────────────────────────────────────────────────── */
   doKnife(who, a) {
     const sk = SKILLS.E;
-    const angle = Phaser.Math.Angle.Between(who.x, who.y, a.aim.x, a.aim.y);
-    const ox = who.x + Math.cos(angle) * 26;
-    const oy = who.y + Math.sin(angle) * 26;
+    who.ammo--;
+    who.squash(1.1, 0.94, who.facing * 0.14, 220);
 
-    const go = this.add.rectangle(ox, oy, sk.len, 4, sk.hue).setDepth(15);
+    const angle = Phaser.Math.Angle.Between(who.x, who.y, a.aim.x, a.aim.y);
+    const go = this.add.rectangle(
+      who.x + Math.cos(angle) * 26, who.y + Math.sin(angle) * 26,
+      sk.len, 4, sk.hue,
+    ).setDepth(15);
     go.setRotation(angle);
     this.physics.add.existing(go);
     go.body.setAllowGravity(false);
@@ -476,27 +627,93 @@ class Duel extends Phaser.Scene {
     this.knives.push({
       go, owner: who, dmg: sk.dmg,
       dieAt: this.time.now + (sk.range / sk.speed) * 1000,
+      grounded: false, deflectedAt: -9999,
     });
+  }
+
+  /** 날던 단검을 땅에 꽂는다 */
+  planted(k, x) {
+    k.grounded = true;
+    k.go.body.setVelocity(0, 0);
+    k.go.body.setAllowGravity(false);
+    k.go.setPosition(Phaser.Math.Clamp(x, 16, VIEW.W - 16), GROUND_Y - 8);
+    k.go.setRotation(-Math.PI / 2.6);
+    k.go.setFillStyle(C.gold);
+    k.go.setDepth(4);
+    this.tweens.add({ targets: k.go, alpha: 0.55, duration: 700, yoyo: true, repeat: -1 });
+  }
+
+  stepKnives(t) {
+    for (let i = this.knives.length - 1; i >= 0; i--) {
+      const k = this.knives[i];
+
+      if (k.grounded) {
+        // 회수 — 지나가면 주워진다
+        for (const f of [this.player, this.enemy]) {
+          if (!f.alive || f.ammo >= MAX_AMMO) continue;
+          if (Math.abs(f.x - k.go.x) < 24 && Math.abs(f.footY - GROUND_Y) < 40) {
+            f.ammo++;
+            this.popText(f.x, f.y - 56, '＋단검', C.gold);
+            k.go.destroy();
+            this.knives.splice(i, 1);
+            break;
+          }
+        }
+        continue;
+      }
+
+      const foe = k.owner === this.player ? this.enemy : this.player;
+
+      // 명중 — 단검은 발밑에 떨어진다
+      if (foe.alive &&
+          Math.abs(k.go.x - foe.x) < foe.w / 2 + 8 &&
+          Math.abs(k.go.y - foe.y) < foe.h / 2 + 4) {
+        if (foe.takeHit(k.dmg, t, k.go.x, 120)) {
+          this.burst(k.go.x, k.go.y, SKILLS.E.hue, 8);
+          this.freeze(FREEZE.knife);
+        }
+        this.planted(k, foe.x);
+        continue;
+      }
+
+      // 사거리 끝 — 중력을 받아 떨어진다
+      if (t > k.dieAt && !k.falling) {
+        k.falling = true;
+        k.go.body.setAllowGravity(true);
+        k.go.body.setVelocity(k.go.body.velocity.x * 0.35, 40);
+      }
+      if (k.go.y >= GROUND_Y - 10) { this.planted(k, k.go.x); continue; }
+
+      // 화면 밖 — 영영 잃는다
+      if (k.go.x < -40 || k.go.x > VIEW.W + 40 || k.go.y < -200) {
+        k.go.destroy();
+        this.knives.splice(i, 1);
+      }
+    }
   }
 
   /* ── 루프 ─────────────────────────────────────────────────────────── */
   update(t) {
-    if (this.over) return;
+    if (!this.over && !this.frozen) {
+      this.stepPlayer(t);
+      this.ai.update(t);
 
-    this.stepPlayer(t);
-    this.ai.update(t);
+      for (const f of [this.player, this.enemy]) {
+        this.resolveAction(f, t);
+        if (f.slashActive(t)) this.deflectCheck(f, t);
+      }
+      this.player.faceToward(this.enemy);
+      this.enemy.faceToward(this.player);
 
-    for (const f of [this.player, this.enemy]) {
-      this.resolveAction(f, t);
-      f.syncVisual();
+      this.stepKnives(t);
+      this.checkEnd();
     }
-    this.player.faceToward(this.enemy);
-    this.enemy.faceToward(this.player);
 
-    this.stepKnives(t);
+    // 정지 중에도 그림은 갱신한다
+    this.player.syncVisual(t);
+    this.enemy.syncVisual(t);
     this.drawAimLayer(t);
     this.drawHud(t);
-    this.checkEnd();
   }
 
   stepPlayer(t) {
@@ -509,31 +726,7 @@ class Duel extends Phaser.Scene {
     p.walk(dir, t);
 
     if (Phaser.Input.Keyboard.JustDown(this.keys.jump)) p.jump(t);
-
     if (this.armed && !p.ready(this.armed, t)) this.armed = null;
-  }
-
-  stepKnives(t) {
-    for (let i = this.knives.length - 1; i >= 0; i--) {
-      const k = this.knives[i];
-      const foe = k.owner === this.player ? this.enemy : this.player;
-
-      const out = k.go.x < -40 || k.go.x > VIEW.W + 40 || k.go.y < -40 || k.go.y > VIEW.H + 40;
-      let hit = false;
-
-      if (foe.alive) {
-        hit = Math.abs(k.go.x - foe.x) < foe.w / 2 + 8 &&
-              Math.abs(k.go.y - foe.y) < foe.h / 2 + 4;
-        if (hit && foe.takeHit(k.dmg, t, k.go.x, 120)) {
-          this.burst(k.go.x, k.go.y, SKILLS.E.hue, 8);
-        }
-      }
-
-      if (hit || out || t > k.dieAt) {
-        k.go.destroy();
-        this.knives.splice(i, 1);
-      }
-    }
   }
 
   /* ── 조준·예고 ────────────────────────────────────────────────────── */
@@ -541,36 +734,29 @@ class Duel extends Phaser.Scene {
     const g = this.gAim;
     g.clear();
 
-    // 플레이어 단검 조준선
     if (this.armed === 'E' && this.player.alive) {
       const ptr = this.input.activePointer;
       this.drawKnifeAim(g, this.player, ptr.worldX, ptr.worldY, C.player, 0.55);
     }
 
-    // AI 예고 — 남은 시간이 짧을수록 진해진다
     if (this.ai.plan) {
       const pl = this.ai.plan;
-      const left = Math.max(0, pl.fireAt - t);
-      const urg = Phaser.Math.Clamp(1 - left / 300, 0.3, 1);
-
-      if (pl.key === 'E') {
+      const urg = Phaser.Math.Clamp(1 - Math.max(0, pl.fireAt - t) / 300, 0.3, 1);
+      if (pl.key === 'E' && pl.aim) {
         this.drawKnifeAim(g, this.enemy, pl.aim.x, pl.aim.y, C.enemy, 0.3 + urg * 0.55);
       } else {
         const e = this.enemy;
         const base = e.facing > 0 ? 0 : Math.PI;
         const half = Phaser.Math.DegToRad(SKILLS.W.arc) / 2;
-        g.fillStyle(C.enemy, 0.12 + urg * 0.22);
-        g.beginPath();
-        g.slice(e.x, e.y, SKILLS.W.reach, base - half, base + half, false);
-        g.fillPath();
+        g.fillStyle(C.enemy, 0.12 + urg * 0.24);
+        g.beginPath(); g.slice(e.x, e.y, SKILLS.W.reach, base - half, base + half, false); g.fillPath();
       }
     }
 
-    // 시전 중 무기 방향 표시
     for (const f of [this.player, this.enemy]) {
       if (!f.alive) continue;
       g.lineStyle(3, C.steel, f.action ? 1 : 0.5);
-      const len = f.action && f.action.key === 'W' ? 30 : 20;
+      const len = f.action && f.action.key === 'W' ? 32 : 20;
       g.lineBetween(f.x, f.y - 6, f.x + f.facing * len, f.y - 12);
     }
   }
@@ -578,11 +764,8 @@ class Duel extends Phaser.Scene {
   drawKnifeAim(g, who, ax, ay, color, alpha) {
     const sk = SKILLS.E;
     const a = Phaser.Math.Angle.Between(who.x, who.y, ax, ay);
-    const ex = who.x + Math.cos(a) * sk.range;
-    const ey = who.y + Math.sin(a) * sk.range;
-
     g.lineStyle(2, color, alpha);
-    g.lineBetween(who.x, who.y, ex, ey);
+    g.lineBetween(who.x, who.y, who.x + Math.cos(a) * sk.range, who.y + Math.sin(a) * sk.range);
     g.fillStyle(sk.hue, alpha * 0.9);
     g.fillCircle(who.x + Math.cos(a) * 46, who.y + Math.sin(a) * 46, 4);
   }
@@ -600,18 +783,18 @@ class Duel extends Phaser.Scene {
     this.txtHint = mk(VIEW.W / 2, 22, '', 12, C.dim, 0.5);
 
     this.slots = {};
-    const bx = VIEW.W / 2 - (SKILL_KEYS.length * 116) / 2;
+    const bx = VIEW.W / 2 - (SKILL_KEYS.length * 132) / 2;
     SKILL_KEYS.forEach((k, i) => {
-      const x = bx + i * 116;
+      const x = bx + i * 132;
       this.slots[k] = {
         key: mk(x + 12, VIEW.H - 62, k, 16, C.bone),
         name: mk(x + 36, VIEW.H - 62, SKILLS[k].name, 13, C.bone),
         hint: mk(x + 36, VIEW.H - 45, SKILLS[k].hint, 10, C.dim),
-        cd: mk(x + 96, VIEW.H - 62, '', 11, C.gold, 1),
+        cd: mk(x + 112, VIEW.H - 62, '', 11, C.gold, 1),
       };
     });
 
-    this.txtEnd = this.add.text(VIEW.W / 2, 210, '', {
+    this.txtEnd = this.add.text(VIEW.W / 2, 200, '', {
       fontFamily: FONT, fontSize: '38px', color: '#e8e3d9', align: 'center',
     }).setOrigin(0.5).setDepth(40);
   }
@@ -622,22 +805,26 @@ class Duel extends Phaser.Scene {
 
     this.hpBar(g, 28, 42, 320, this.player, false);
     this.hpBar(g, VIEW.W - 28, 42, 320, this.enemy, true);
+    this.ammoDots(g, 28, 64, this.player, false);
+    this.ammoDots(g, VIEW.W - 28, 64, this.enemy, true);
 
-    const bx = VIEW.W / 2 - (SKILL_KEYS.length * 116) / 2;
+    const bx = VIEW.W / 2 - (SKILL_KEYS.length * 132) / 2;
     SKILL_KEYS.forEach((k, i) => {
-      const x = bx + i * 116, y = VIEW.H - 68, w = 108, h = 46;
+      const x = bx + i * 132, y = VIEW.H - 68, w = 124, h = 46;
       const left = this.player.cdLeft(k, t);
       const ratio = left / SKILLS[k].cd;
       const on = this.armed === k;
+      const dry = k === 'E' && this.player.ammo <= 0;
 
       g.fillStyle(C.sky, 0.6).fillRect(x, y, w, h);
       if (ratio > 0) g.fillStyle(C.dim, 0.22).fillRect(x, y, w, h * ratio);
-      g.lineStyle(on ? 2 : 1, on ? C.gold : C.line, on ? 1 : 0.8);
+      g.lineStyle(on ? 2 : 1, on ? C.gold : (dry ? C.enemy : C.line), on ? 1 : 0.8);
       g.strokeRect(x, y, w, h);
 
       const s = this.slots[k];
-      s.cd.setText(left > 0 ? (left / 1000).toFixed(1) : '준비');
-      s.cd.setColor(left > 0 ? '#7d8598' : '#d9a441');
+      const txt = dry ? '없음' : (left > 0 ? (left / 1000).toFixed(1) : '준비');
+      s.cd.setText(txt);
+      s.cd.setColor(dry ? '#e0574a' : (left > 0 ? '#7d8598' : '#d9a441'));
     });
 
     this.txtHint.setText(
@@ -648,12 +835,19 @@ class Duel extends Phaser.Scene {
   }
 
   hpBar(g, x, y, w, f, flip) {
-    const h = 14;
-    const x0 = flip ? x - w : x;
+    const h = 14, x0 = flip ? x - w : x;
     const fw = w * (f.hp / f.maxHp);
     g.fillStyle(C.sky, 0.65).fillRect(x0, y, w, h);
     g.fillStyle(f.color, 0.92).fillRect(flip ? x - fw : x0, y, fw, h);
     g.lineStyle(1, C.line, 0.9).strokeRect(x0, y, w, h);
+  }
+
+  ammoDots(g, x, y, f, flip) {
+    for (let i = 0; i < MAX_AMMO; i++) {
+      const cx = flip ? x - 6 - i * 16 : x + 6 + i * 16;
+      if (i < f.ammo) g.fillStyle(C.gold, 0.95).fillCircle(cx, y + 6, 4);
+      else { g.lineStyle(1, C.dim, 0.7); g.strokeCircle(cx, y + 6, 4); }
+    }
   }
 
   /* ── 소품 ─────────────────────────────────────────────────────────── */
@@ -662,17 +856,17 @@ class Duel extends Phaser.Scene {
       fontFamily: FONT, fontSize: '15px',
       color: Phaser.Display.Color.IntegerToColor(color).rgba,
     }).setOrigin(0.5).setDepth(35);
-    this.tweens.add({ targets: o, y: y - 28, alpha: 0, duration: 600, onComplete: () => o.destroy() });
+    this.tweens.add({ targets: o, y: y - 28, alpha: 0, duration: 620, onComplete: () => o.destroy() });
   }
 
   burst(x, y, color, n) {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      const d = 12 + Math.random() * 40;
+      const d = 12 + Math.random() * 44;
       const p = this.add.circle(x, y, 2 + Math.random() * 2, color).setDepth(22);
       this.tweens.add({
         targets: p, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d,
-        alpha: 0, duration: 280 + Math.random() * 280,
+        alpha: 0, duration: 280 + Math.random() * 300,
         onComplete: () => p.destroy(),
       });
     }
@@ -682,6 +876,7 @@ class Duel extends Phaser.Scene {
     if (this.over || (this.player.alive && this.enemy.alive)) return;
     this.over = true;
     this.armed = null;
+    this.physics.world.resume();
     const win = this.enemy.hp <= 0 && this.player.hp > 0;
     this.txtEnd.setText(`${win ? '승리' : '패배'}\n\nENTER 로 다시`);
     this.txtEnd.setColor(win ? '#4ecb8f' : '#e0574a');
