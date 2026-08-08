@@ -2,13 +2,148 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <title>My Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>그림자 도시</title>
     <style>
-      body { margin: 0; display: grid; place-items: center; height: 100vh; background: #1a1a2e; }
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        background: #0a0d14; overflow: hidden;
+        font-family: "Pretendard", "Noto Sans KR", system-ui, sans-serif;
+        color: #e8e3d9;
+        -webkit-user-select: none; user-select: none;
+      }
+      #game { position: fixed; inset: 0; }
+      #game canvas { display: block; width: 100%; height: 100%; }
+
+      /* ── 화상 비네트 ─────────────────────────────────────────── */
+      #burnVignette {
+        position: fixed; inset: 0; pointer-events: none; z-index: 5;
+        opacity: 0; transition: opacity 160ms ease-out;
+        background: radial-gradient(ellipse at center, rgba(255,120,40,0) 45%, rgba(255,70,20,0.55) 100%);
+      }
+      #burnVignette.on { opacity: 1; animation: burnPulse 0.5s ease-in-out infinite; }
+      @keyframes burnPulse {
+        0%, 100% { opacity: 0.75; }
+        50% { opacity: 1; }
+      }
+
+      /* ── HUD ──────────────────────────────────────────────────── */
+      #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+      .panel {
+        position: absolute; background: rgba(10,13,20,0.62);
+        border: 1px solid rgba(232,227,217,0.14); border-radius: 10px;
+        backdrop-filter: blur(4px);
+      }
+
+      #hpPanel { top: 16px; left: 16px; padding: 10px 14px; width: 240px; }
+      #hpLabel { font-size: 11px; color: #7d8598; letter-spacing: 0.04em; display: flex; justify-content: space-between; margin-bottom: 6px; }
+      #hpTrack { height: 12px; border-radius: 6px; background: rgba(255,255,255,0.08); overflow: hidden; }
+      #hpFill { height: 100%; width: 100%; background: linear-gradient(90deg, #4ecb8f, #7fe0ab); transition: width 120ms linear, background-color 200ms; }
+      #hpFill.low { background: linear-gradient(90deg, #e0574a, #ff8a6a); }
+      #statusTag { margin-top: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+      #statusTag.shade { color: #4ecb8f; }
+      #statusTag.sun { color: #ff6b4a; }
+      #statusTag.night { color: #8fa3d9; }
+
+      #dayPanel { top: 16px; right: 16px; padding: 10px 14px; width: 200px; text-align: right; }
+      #dayLabel { font-size: 11px; color: #7d8598; letter-spacing: 0.04em; margin-bottom: 6px; }
+      #dayTrack { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
+      #dayFill { position: absolute; inset: 0; width: 50%; background: linear-gradient(90deg, #ffcf6b, #ffa552); }
+      #dayTime { margin-top: 6px; font-size: 13px; color: #d9a441; }
+
+      #goalPanel { top: 86px; right: 16px; padding: 8px 14px; text-align: right; font-size: 12px; color: #a8b0c2; }
+      #goalPanel b { color: #d9a441; }
+
+      #minimapWrap { bottom: 16px; right: 16px; padding: 6px; }
+      #minimap { display: block; border-radius: 6px; }
+
+      #hint {
+        bottom: 16px; left: 16px; padding: 8px 14px; font-size: 12px; color: #7d8598;
+        line-height: 1.6;
+      }
+      #hint b { color: #bcc4d6; }
+
+      /* ── 종료 화면 ────────────────────────────────────────────── */
+      #endScreen {
+        position: fixed; inset: 0; z-index: 20; display: none;
+        align-items: center; justify-content: center; flex-direction: column; gap: 18px;
+        background: rgba(6,8,13,0.72); pointer-events: none;
+      }
+      #endScreen.show { display: flex; pointer-events: all; }
+      #endTitle { font-size: 44px; font-weight: 700; text-shadow: 0 2px 18px rgba(0,0,0,0.6); }
+      #endTitle.win { color: #4ecb8f; }
+      #endTitle.lose { color: #e0574a; }
+      #endSub { font-size: 14px; color: #a8b0c2; }
+      #restartBtn {
+        pointer-events: all; cursor: pointer; padding: 10px 28px; font-size: 14px;
+        background: rgba(232,227,217,0.1); border: 1px solid rgba(232,227,217,0.3);
+        border-radius: 8px; color: #e8e3d9; font-family: inherit;
+      }
+      #restartBtn:hover { background: rgba(232,227,217,0.18); }
+
+      #loading {
+        position: fixed; inset: 0; z-index: 30; display: flex;
+        align-items: center; justify-content: center; background: #0a0d14;
+        color: #7d8598; font-size: 13px; letter-spacing: 0.05em;
+      }
+
+      /* ── 포인터 잠금 안내 ─────────────────────────────────────── */
+      #pointerLockOverlay {
+        position: fixed; inset: 0; z-index: 15; display: none;
+        align-items: center; justify-content: center;
+        background: rgba(6,8,13,0.4); cursor: pointer;
+      }
+      #pointerLockOverlay.show { display: flex; pointer-events: all; }
+      #pointerLockBox {
+        padding: 18px 26px; text-align: center; border-radius: 12px;
+        background: rgba(10,13,20,0.78); border: 1px solid rgba(232,227,217,0.18);
+        font-size: 15px; color: #e8e3d9;
+      }
+      #pointerLockBox span { display: block; margin-top: 6px; font-size: 12px; color: #7d8598; }
     </style>
   </head>
   <body>
+    <div id="loading">도시를 세우는 중…</div>
     <div id="game"></div>
+    <div id="burnVignette"></div>
+
+    <div id="pointerLockOverlay">
+      <div id="pointerLockBox">클릭해서 시점 조작 시작<br/><span>ESC로 마우스 커서를 되찾을 수 있어요</span></div>
+    </div>
+
+    <div id="hud">
+      <div id="hpPanel" class="panel">
+        <div id="hpLabel"><span>체력</span><span id="hpNum">100</span></div>
+        <div id="hpTrack"><div id="hpFill"></div></div>
+        <div id="statusTag">-</div>
+      </div>
+
+      <div id="dayPanel" class="panel">
+        <div id="dayLabel">해의 위치</div>
+        <div id="dayTrack"><div id="dayFill"></div></div>
+        <div id="dayTime">-</div>
+      </div>
+
+      <div id="goalPanel" class="panel">목적지까지 <b id="goalDist">-</b></div>
+
+      <div id="minimapWrap" class="panel">
+        <canvas id="minimap" width="176" height="176"></canvas>
+      </div>
+
+      <div id="hint" class="panel">
+        <b>WASD</b> 이동 · 클릭 후 마우스로 시점 회전(마인크래프트 방식) · 휠 줌<br/>
+        태양 아래에 있으면 화상을 입어 체력이 줄어듭니다. <b>그늘을 따라</b> 목적지로 이동하세요.
+      </div>
+    </div>
+
+    <div id="endScreen">
+      <div id="endTitle"></div>
+      <div id="endSub"></div>
+      <button id="restartBtn">R · 다시 시작</button>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
