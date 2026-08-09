@@ -59,7 +59,12 @@ export class Sun {
     this.light.shadow.camera.near = 1;
     this.light.shadow.camera.far = extent * 2.2;
     this.light.shadow.mapSize.set(2048, 2048);
-    this.light.shadow.bias = -0.0015;
+    // 그림자맵 해상도 대비 도시 규모가 커서(텍셀당 약 0.12 유닛) 깊이 bias만으로 셰도우 아크네를
+    // 없애려면 값이 커야 하는데, 그러면 건물이 바닥에 닿는 지점에서 그림자가 살짝 떨어져 보이는
+    // 피터패닝(그림자와 물체 사이 얇은 틈)이 생긴다. normalBias(표면 법선 방향 오프셋)를 주로 쓰고
+    // depth bias는 최소화해 접지부 그림자 누락을 없앤다.
+    this.light.shadow.bias = -0.0002;
+    this.light.shadow.normalBias = 0.15;
     scene.add(this.light);
     scene.add(this.light.target);
 

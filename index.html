@@ -49,8 +49,17 @@
 
       #dayPanel { top: 16px; right: 16px; padding: 10px 14px; width: 200px; text-align: right; }
       #dayLabel { font-size: 11px; color: #7d8598; letter-spacing: 0.04em; margin-bottom: 6px; }
-      #dayTrack { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); overflow: hidden; }
-      #dayFill { position: absolute; inset: 0; width: 50%; background: linear-gradient(90deg, #ffcf6b, #ffa552); }
+      #sunArc { display: block; width: 100%; height: 54px; }
+      #sunHorizon { stroke: rgba(255,255,255,0.16); stroke-width: 1; }
+      #sunArcBg { fill: none; stroke: rgba(255,255,255,0.08); stroke-width: 3; stroke-linecap: round; }
+      #sunArcFill {
+        fill: none; stroke: url(#sunArcGradient); stroke-width: 3; stroke-linecap: round;
+        stroke-dasharray: 100; stroke-dashoffset: 100; transition: stroke-dashoffset 200ms linear;
+      }
+      #sunDot {
+        fill: #ffcf6b; filter: drop-shadow(0 0 4px rgba(255,207,107,0.9));
+        transition: cx 200ms linear, cy 200ms linear, opacity 200ms linear;
+      }
       #dayTime { margin-top: 6px; font-size: 13px; color: #d9a441; }
 
       #goalPanel { top: 86px; right: 16px; padding: 8px 14px; text-align: right; font-size: 12px; color: #a8b0c2; }
@@ -122,7 +131,18 @@
 
       <div id="dayPanel" class="panel">
         <div id="dayLabel">해의 위치</div>
-        <div id="dayTrack"><div id="dayFill"></div></div>
+        <svg id="sunArc" viewBox="0 0 172 54" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <linearGradient id="sunArcGradient" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#ffcf6b" />
+              <stop offset="100%" stop-color="#ffa552" />
+            </linearGradient>
+          </defs>
+          <line id="sunHorizon" x1="4" y1="46" x2="168" y2="46" />
+          <path id="sunArcBg" d="M10 46 A 76 38 0 0 1 162 46" />
+          <path id="sunArcFill" d="M10 46 A 76 38 0 0 1 162 46" pathLength="100" />
+          <circle id="sunDot" cx="10" cy="46" r="4" />
+        </svg>
         <div id="dayTime">-</div>
       </div>
 

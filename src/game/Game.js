@@ -11,6 +11,9 @@ import { Minimap } from './Minimap.js';
 const GOAL_RADIUS = 3;
 const UP = new THREE.Vector3(0, 1, 0);
 
+/* 해의 위치 HUD — 일출~일몰을 그리는 타원 아치 (index.html의 #sunArc viewBox와 일치해야 함) */
+const SUN_ARC = { cx: 86, cy: 46, rx: 76, ry: 38 };
+
 /* 마우스 시점 — Pointer Lock으로 커서를 가두고, 마인크래프트처럼 이동량만큼 그대로 시점을 돌린다 */
 const YAW_SENSITIVITY = 0.0022;   // rad / px
 const PITCH_SENSITIVITY = 0.0022; // rad / px
@@ -32,7 +35,8 @@ export class Game {
       hpFill: document.getElementById('hpFill'),
       hpNum: document.getElementById('hpNum'),
       statusTag: document.getElementById('statusTag'),
-      dayFill: document.getElementById('dayFill'),
+      sunDot: document.getElementById('sunDot'),
+      sunArcFill: document.getElementById('sunArcFill'),
       dayTime: document.getElementById('dayTime'),
       goalDist: document.getElementById('goalDist'),
       minimapCanvas: document.getElementById('minimap'),
@@ -279,6 +283,10 @@ export class Game {
     const dz = this.player.position.z - this.city.goal.z;
     if (Math.hypot(dx, dz) < GOAL_RADIUS) {
       this.finish('won', '목적지 도착', '그림자만 밟고 무사히 도착했습니다.');
+      return;
+    }
+    if (!this.sun.isDaytime) {
+      this.finish('lost', '밤이 되었습니다', '해가 지기 전에 목적지에 도착하지 못했습니다.');
     }
   }
 
@@ -307,7 +315,13 @@ export class Game {
     this.dom.burnVignette.classList.toggle('on', p.burning);
 
     const t = this.sun.progress;
-    this.dom.dayFill.style.width = `${t * 100}%`;
+    // f: 일출(0)~일몰(1) 진행률. 밤에는 1을 넘어가는데, 같은 공식이 그대로
+    // 해를 지평선 아래·아치 뷰박스 밖으로 내려보내 자연스럽게 사라지게 한다.
+    const f = t / 0.5;
+    const angle = Math.PI * (1 - f);
+    this.dom.sunDot.setAttribute('cx', SUN_ARC.cx + SUN_ARC.rx * Math.cos(angle));
+    this.dom.sunDot.setAttribute('cy', SUN_ARC.cy - SUN_ARC.ry * Math.sin(angle));
+    this.dom.sunArcFill.style.strokeDashoffset = `${100 - THREE.MathUtils.clamp(f, 0, 1) * 100}`;
     // t=0 일출(06:00), t=0.25 정오(12:00), t=0.5 일몰(18:00), t=0.75 자정(00:00)
     const clock = (t + 0.25) % 1;
     const hours = Math.floor(clock * 24);
