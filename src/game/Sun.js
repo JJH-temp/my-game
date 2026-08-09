@@ -42,7 +42,9 @@ export class Sun {
   constructor(scene, extent, dayLength = 150) {
     this.extent = extent;
     this.dayLength = dayLength;
-    this.t = 0.12; // 이른 아침에서 시작 — 곧바로 긴 그림자를 볼 수 있게
+    // t=0이 정확히 일출(고도 0)이라 그 순간엔 isDaytime이 false라 타임어택이 바로 끝나버린다.
+    // 안전하게 낮으로 판정되는 선에서 최대한 0에 가깝게 잡아 일출 직후부터 시작한다.
+    this.t = 0.01;
 
     this.direction = new THREE.Vector3(0, 1, 0);
     this.isDaytime = true;
