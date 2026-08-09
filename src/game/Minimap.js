@@ -52,12 +52,15 @@ export class Minimap {
     const p = this.worldToMap(player.position.x, player.position.z);
     ctx.save();
     ctx.translate(p.x, p.y);
-    ctx.rotate(player.facing);
+    // world의 (x,z)를 그대로 canvas의 (x,y)로 매핑하면 Three.js의 우수법계 Y축 회전과
+    // canvas 2D 회전의 방향이 서로 거울상이 된다 — 각도를 반전(-facing)하고 삼각형 꼭짓점을
+    // 아래로 뒤집어야 실제로 바라보는 방향과 일치한다.
+    ctx.rotate(-player.facing);
     ctx.fillStyle = player.burning ? '#ff5a3c' : '#4ecb8f';
     ctx.beginPath();
-    ctx.moveTo(0, -6);
-    ctx.lineTo(4, 5);
-    ctx.lineTo(-4, 5);
+    ctx.moveTo(0, 6);
+    ctx.lineTo(4, -5);
+    ctx.lineTo(-4, -5);
     ctx.closePath();
     ctx.fill();
     ctx.restore();
