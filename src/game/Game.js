@@ -59,9 +59,12 @@ export class Game {
     this.initPostFX();
     this.initInput();
 
-    this.dom.loading.style.display = 'none';
     if (import.meta.env.DEV) window.__game = this;
-    requestAnimationFrame(() => this.loop());
+    // 캐릭터 모델(비동기 로딩) 준비가 끝난 뒤에야 로딩 화면을 내리고 루프를 시작한다
+    this.player.ready.then(() => {
+      this.dom.loading.style.display = 'none';
+      requestAnimationFrame(() => this.loop());
+    });
   }
 
   initScene() {
