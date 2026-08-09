@@ -26,6 +26,5 @@ npm run dev
 ```
 
 Three.js로 제작되었다. 도시/태양/플레이어/미니맵 로직은 `src/game/`에 모듈별로 분리되어 있다.
-플레이어 캐릭터는 `public/models/ReadyPlayerMe.glb`(Ready Player Me 아바타)를 쓰고,
-같은 Mixamo 골격 구조를 가진 `public/models/Xbot.glb`의 idle/walk 애니메이션을 본 이름만
-맞춰 재적용(리타겟)한다 — 정작 캐릭터 모델 자체엔 애니메이션이 없기 때문이다.
+플레이어 캐릭터는 `public/models/Xbot.glb`(의상 없는 단순한 사람 형태의 Mixamo 리깅 모델,
+idle/walk 애니메이션 내장)를 사용한다.
