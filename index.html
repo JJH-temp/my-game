@@ -37,16 +37,6 @@
         backdrop-filter: blur(4px);
       }
 
-      #hpPanel { top: 16px; left: 16px; padding: 10px 14px; width: 240px; }
-      #hpLabel { font-size: 11px; color: #7d8598; letter-spacing: 0.04em; display: flex; justify-content: space-between; margin-bottom: 6px; }
-      #hpTrack { height: 12px; border-radius: 6px; background: rgba(255,255,255,0.08); overflow: hidden; }
-      #hpFill { height: 100%; width: 100%; background: linear-gradient(90deg, #4ecb8f, #7fe0ab); transition: width 120ms linear, background-color 200ms; }
-      #hpFill.low { background: linear-gradient(90deg, #e0574a, #ff8a6a); }
-      #statusTag { margin-top: 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
-      #statusTag.shade { color: #4ecb8f; }
-      #statusTag.sun { color: #ff6b4a; }
-      #statusTag.night { color: #8fa3d9; }
-
       #dayPanel { top: 16px; right: 16px; padding: 10px 14px; width: 200px; text-align: right; }
       #dayLabel { font-size: 11px; color: #7d8598; letter-spacing: 0.04em; margin-bottom: 6px; }
       #sunArc { display: block; width: 100%; height: 54px; }
@@ -61,9 +51,6 @@
         transition: cx 200ms linear, cy 200ms linear, opacity 200ms linear;
       }
       #dayTime { margin-top: 6px; font-size: 13px; color: #d9a441; }
-
-      #goalPanel { top: 86px; right: 16px; padding: 8px 14px; text-align: right; font-size: 12px; color: #a8b0c2; }
-      #goalPanel b { color: #d9a441; }
 
       #minimapWrap { bottom: 16px; right: 16px; padding: 6px; }
       #minimap { display: block; border-radius: 6px; }
@@ -123,12 +110,6 @@
     </div>
 
     <div id="hud">
-      <div id="hpPanel" class="panel">
-        <div id="hpLabel"><span>체력</span><span id="hpNum">100</span></div>
-        <div id="hpTrack"><div id="hpFill"></div></div>
-        <div id="statusTag">-</div>
-      </div>
-
       <div id="dayPanel" class="panel">
         <div id="dayLabel">해의 위치</div>
         <svg id="sunArc" viewBox="0 0 172 54" preserveAspectRatio="xMidYMid meet">
@@ -145,8 +126,6 @@
         </svg>
         <div id="dayTime">-</div>
       </div>
-
-      <div id="goalPanel" class="panel">목적지까지 <b id="goalDist">-</b></div>
 
       <div id="minimapWrap" class="panel">
         <canvas id="minimap" width="176" height="176"></canvas>

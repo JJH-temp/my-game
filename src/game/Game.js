@@ -32,13 +32,9 @@ export class Game {
       container: document.getElementById('game'),
       loading: document.getElementById('loading'),
       burnVignette: document.getElementById('burnVignette'),
-      hpFill: document.getElementById('hpFill'),
-      hpNum: document.getElementById('hpNum'),
-      statusTag: document.getElementById('statusTag'),
       sunDot: document.getElementById('sunDot'),
       sunArcFill: document.getElementById('sunArcFill'),
       dayTime: document.getElementById('dayTime'),
-      goalDist: document.getElementById('goalDist'),
       minimapCanvas: document.getElementById('minimap'),
       pointerLockOverlay: document.getElementById('pointerLockOverlay'),
       endScreen: document.getElementById('endScreen'),
@@ -264,6 +260,7 @@ export class Game {
     }
 
     this.updateCameraTransform();
+    this.player.updateHealthBar(this.camera);
     this.composer.render();
     this.updateHud();
   }
@@ -305,15 +302,6 @@ export class Game {
 
   updateHud() {
     const p = this.player;
-    const hpPct = Math.round((p.hp / p.maxHp) * 100);
-    this.dom.hpFill.style.width = `${hpPct}%`;
-    this.dom.hpFill.classList.toggle('low', hpPct <= 30);
-    this.dom.hpNum.textContent = Math.round(p.hp);
-
-    const tag = this.dom.statusTag;
-    const labels = { sun: '☀ 태양 노출 — 화상 중', shade: '⛅ 그늘 — 안전', night: '🌙 밤 — 안전' };
-    tag.textContent = labels[p.status];
-    tag.className = p.status;
 
     this.dom.burnVignette.classList.toggle('on', p.burning);
 
@@ -331,9 +319,6 @@ export class Game {
     const mins = Math.floor((clock * 24 * 60) % 60);
     this.dom.dayTime.textContent = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 
-    const dist = Math.hypot(p.position.x - this.city.goal.x, p.position.z - this.city.goal.z);
-    this.dom.goalDist.textContent = `${Math.max(0, Math.round(dist))}m`;
-
-    this.minimap.draw(p, this.sun.direction, this.sun.isDaytime);
+    this.minimap.draw(p);
   }
 }

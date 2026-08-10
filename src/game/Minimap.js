@@ -1,7 +1,7 @@
 /* ==========================================================================
  *  미니맵 — 도시 전체를 위에서 내려다본 2D 캔버스.
  *  3인칭 시점만으로는 도시 전체의 그늘 패턴을 파악하기 어려우므로,
- *  건물 배치와 플레이어/목적지/태양 방향을 한눈에 보여준다.
+ *  건물 배치와 플레이어/목적지 위치를 한눈에 보여준다.
  * ========================================================================== */
 export class Minimap {
   constructor(canvas, city) {
@@ -19,7 +19,7 @@ export class Minimap {
     };
   }
 
-  draw(player, sunDirection, isDaytime) {
+  draw(player) {
     const ctx = this.ctx;
     const s = this.size;
     ctx.clearRect(0, 0, s, s);
@@ -64,18 +64,6 @@ export class Minimap {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-
-    // 태양 방향 표시 (테두리 화살표)
-    if (isDaytime) {
-      const ang = Math.atan2(sunDirection.x, sunDirection.z);
-      const r = s / 2 - 10;
-      const sx = s / 2 + Math.sin(ang) * r;
-      const sy = s / 2 + Math.cos(ang) * r;
-      ctx.fillStyle = '#ffcf6b';
-      ctx.beginPath();
-      ctx.arc(sx, sy, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
 
     ctx.strokeStyle = 'rgba(232,227,217,0.15)';
     ctx.lineWidth = 1;
